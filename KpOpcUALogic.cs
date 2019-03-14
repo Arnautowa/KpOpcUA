@@ -216,10 +216,11 @@ namespace Scada.Comm.Devices
                 m_UtilsLogFilePath = AppDomain.CurrentDomain.BaseDirectory + "Opc.Ua.Core.Logs.txt";
                 Opc.Ua.Utils.SetTraceLog(m_UtilsLogFilePath, m_deleteOnLoad);
                 Opc.Ua.Utils.SetTraceMask(m_traceMasks);
-                Opc.Ua.Utils.Trace(Opc.Ua.Utils.TraceMasks.Information, "Beginning of Opc.Ua.Core.Utils logs");
+                Opc.Ua.Utils.Trace(Opc.Ua.Utils.TraceMasks.Information, "Beginning of Opc.Ua..Utils logs");
                 */
 
-                bool appCert = await application.CheckApplicationInstanceCertificate(false, 0);
+                //bool appCert = await application.CheckApplicationInstanceCertificate(false, 0); E.A. не используется
+
                 m_configuration.ApplicationUri = Opc.Ua.Utils.GetApplicationUriFromCertificate(m_configuration.SecurityConfiguration.ApplicationCertificate.Certificate);
                 m_configuration.CertificateValidator.CertificateValidation += new CertificateValidationEventHandler(CertificateValidator_CertificateValidation);
             }
@@ -235,14 +236,50 @@ namespace Scada.Comm.Devices
             {
                 string path = config.ServerPath;
                 Boolean cert = config.UseCertificate;
+
+
+                var configSert = new ApplicationConfiguration()
+                {
+                    ApplicationName = "ScadaCommSvc",
+                    ApplicationUri = "urn:MAIN:OPCUA:SimulationServer",
+                    ApplicationType = ApplicationType.Client,
+                    SecurityConfiguration = new SecurityConfiguration
+                    {
+                        ApplicationCertificate = new CertificateIdentifier { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\OPC Foundation\CertificateStores\MachineDefault", SubjectName = "CN=SimulationServer, C=FR, O= Prosys OPC, DC=MAIN" },
+                        TrustedIssuerCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\OPC Foundation\CertificateStores\UA Certificate Authorities" },
+                        TrustedPeerCertificates = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\OPC Foundation\CertificateStores\UA Applications" },
+                        RejectedCertificateStore = new CertificateTrustList { StoreType = @"Directory", StorePath = @"%CommonApplicationData%\OPC Foundation\CertificateStores\RejectedCertificates" },
+                        AutoAcceptUntrustedCertificates = true,
+                        AddAppCertToTrustedStore = true
+                    },
+                    TransportConfigurations = new TransportConfigurationCollection(),
+                    TransportQuotas = new TransportQuotas { OperationTimeout = 15000 },
+                    ClientConfiguration = new ClientConfiguration { DefaultSessionTimeout = 60000 },
+                    TraceConfiguration = new TraceConfiguration()
+                };
+                configSert.Validate(ApplicationType.Client).GetAwaiter().GetResult();
+                if (configSert.SecurityConfiguration.AutoAcceptUntrustedCertificates)
+                {
+                    configSert.CertificateValidator.CertificateValidation += (s, e) => { e.Accept = (e.Error.StatusCode == StatusCodes.BadCertificateUntrusted); };
+                }
+
+                var application = new ApplicationInstance
+                {
+                    ApplicationName = "ScadaCommSvc",
+                    ApplicationType = ApplicationType.Client,
+                    ApplicationConfiguration = configSert
+                };
+                application.CheckApplicationInstanceCertificate(false, 2048).GetAwaiter().GetResult();
+
+
                 if (string.IsNullOrEmpty(path))
                     throw new Exception(Localization.UseRussian ? "сервер не задан" : "server is undefined");
 
                 EndpointDescription selectedEndpoint = CoreClientUtils.SelectEndpoint(path, cert, 15000);
-                EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(m_configuration);
+                EndpointConfiguration endpointConfiguration = EndpointConfiguration.Create(configSert/*m_configuration*/);
                 ConfiguredEndpoint endpoint = new ConfiguredEndpoint(null, selectedEndpoint, endpointConfiguration);
-
-                m_session = await Opc.Ua.Client.Session.Create(m_configuration, endpoint, false, "KpOpcUA Demo", 60000, new UserIdentity(new AnonymousIdentityToken()), null);
+           
+                m_session = await Opc.Ua.Client.Session.Create(/*m_configuration*/configSert, endpoint, false, "KpOpcUA Demo", 60000, /*new UserIdentity(new AnonymousIdentityToken())*/null, null);
                 m_session.KeepAlive += Client_KeepAlive;
 
                 return true;
@@ -417,7 +454,8 @@ namespace Scada.Comm.Devices
                     {
                         if (itemUA.nodeId == monitoredItem.StartNodeId)
                         {
-                            SetCurData(itemUA.signal, Convert.ToDouble(Opc.Ua.Utils.Format("{0}", notification.Value.WrappedValue)), Scada.Data.Configuration.BaseValues.CnlStatuses.Defined);
+                            double val = Convert.ToDouble(notification.Value.Value);
+                            SetCurData(itemUA.signal, /*Convert.ToDouble(Opc.Ua.Utils.Format("{0}", notification.Value.WrappedValue))*/val, Scada.Data.Configuration.BaseValues.CnlStatuses.Defined);
                             break;
                         }
                     }
